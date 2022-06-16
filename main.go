@@ -9,19 +9,30 @@ import (
 	"net/http"
 	"reflect"
 	"runtime"
+	"strings"
 	"time"
 
 	stream "github.com/GetStream/stream-chat-go/v5"
 )
 
 var (
-	apiSecret string
-	client    *stream.Client
+	apiSecret   string
+	outcomesVar string
+	client      *stream.Client
 )
 
 func init() {
 	rand.Seed(time.Now().Unix())
 	flag.StringVar(&apiSecret, "secret", "", "Stream Chat API Secret")
+
+	var outcomeNames []string
+	for name, _ := range availableOutcomes {
+		outcomeNames = append(outcomeNames, name)
+	}
+
+	defaultOutcomes := strings.Join(outcomeNames, ",")
+	outcomeUsage := fmt.Sprintf("List of outcomes (commas) to use, allowed values: %s", defaultOutcomes)
+	flag.StringVar(&outcomesVar, "outcomes", defaultOutcomes, outcomeUsage)
 }
 
 func writeToken(w http.ResponseWriter, token string) {
@@ -66,12 +77,14 @@ func serverTimesOut(w http.ResponseWriter, _ string) {
 
 type tokenGen func(http.ResponseWriter, string)
 
-var outcomes = []tokenGen{
-	serverTimesOut,
-	serverErrors,
-	returnsExpiredToken,
-	returnsValidToken,
-	returnsGarbageToken,
+var outcomes []tokenGen
+
+var availableOutcomes = map[string]tokenGen{
+	"serverTimesOut":      serverTimesOut,
+	"serverErrors":        serverErrors,
+	"returnsExpiredToken": returnsExpiredToken,
+	"returnsValidToken":   returnsValidToken,
+	"returnsGarbageToken": returnsGarbageToken,
 }
 
 func token(w http.ResponseWriter, req *http.Request) {
@@ -97,6 +110,17 @@ func main() {
 		log.Fatal("api secret param not provided")
 	}
 
+	for _, outcome := range strings.Split(outcomesVar, ",") {
+		fn, ok := availableOutcomes[outcome]
+		if ok {
+			outcomes = append(outcomes, fn)
+		}
+	}
+
+	if len(outcomes) == 0 {
+		log.Fatal("did not provide a list of valid outcomes see --help")
+	}
+
 	client, err = stream.NewClient("key-does-matter", apiSecret)
 	if err != nil {
 		print(err)
@@ -104,5 +128,6 @@ func main() {
 	}
 	http.HandleFunc("/token", token)
 	log.Println("listening on :8090")
+	log.Println("selected " + outcomesVar + " outcomes")
 	http.ListenAndServe(":8090", nil)
 }
